@@ -95,11 +95,10 @@ class OkdeskClient:
             raise AuthenticationError("Okdesk API key was rejected")
         return response
 
-    def latest_issue_ids(self, limit: int = 10) -> list[int]:
+    def latest_issues(self, limit: int = 10) -> list[dict[str, Any]]:
         response = self._get(
             "/api/v1/issues/list",
             {
-                "page[number]": 1,
                 "page[size]": limit,
                 "sorting[field]": "created_at",
                 "sorting[direction]": "reverse",
@@ -116,7 +115,7 @@ class OkdeskClient:
         if not isinstance(payload, list):
             raise RemoteServiceError("Okdesk issue list has an unexpected format")
 
-        ids: list[int] = []
+        issues: list[dict[str, Any]] = []
         for item in payload:
             if not isinstance(item, dict):
                 raise RemoteServiceError("Okdesk issue list contains an invalid item")
@@ -128,8 +127,13 @@ class OkdeskClient:
             except (TypeError, ValueError) as exc:
                 raise RemoteServiceError("Okdesk returned an invalid issue number") from exc
             if issue_id > 0:
-                ids.append(issue_id)
-        return ids[:limit]
+                normalized = dict(item)
+                normalized["id"] = issue_id
+                issues.append(normalized)
+        return issues[:limit]
+
+    def latest_issue_ids(self, limit: int = 10) -> list[int]:
+        return [int(issue["id"]) for issue in self.latest_issues(limit)]
 
     def get_issue(self, issue_id: int) -> dict[str, Any] | None:
         response = self._get(
@@ -150,6 +154,11 @@ class OkdeskClient:
             raise RemoteServiceError("Okdesk issue response has an unexpected format")
 
         returned_id = payload.get("id")
+        if returned_id is None:
+            # Okdesk can answer HTTP 200 with an error-shaped JSON object for an
+            # issue that was deleted, merged, or is no longer visible. It has no
+            # top-level id and must be treated as an absent sequential number.
+            return None
         try:
             returned_id = int(returned_id)
         except (TypeError, ValueError) as exc:

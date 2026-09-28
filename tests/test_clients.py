@@ -72,7 +72,32 @@ class ClientTests(unittest.TestCase):
 
         self.assertEqual(result, list(range(20, 10, -1)))
         self.assertEqual(session.last_params["page[size]"], 10)
+        self.assertNotIn("page[number]", session.last_params)
+        self.assertEqual(session.last_params["sorting[field]"], "created_at")
+        self.assertEqual(session.last_params["sorting[direction]"], "reverse")
         self.assertEqual(session.last_params["api_token"], "secret")
+
+    def test_latest_issues_include_alert_fields_and_normalize_id(self) -> None:
+        client = OkdeskClient("https://example.okdesk.ru", "u", "p", 30)
+        client.api_token = "secret"
+        client.session = FakeSession(  # type: ignore[assignment]
+            FakeResponse(
+                200,
+                [
+                    {
+                        "id": "42",
+                        "title": "Новая заявка",
+                        "priority": {"code": "high", "name": "Высокий"},
+                    }
+                ],
+            )
+        )
+
+        result = client.latest_issues(10)
+
+        self.assertEqual(result[0]["id"], 42)
+        self.assertEqual(result[0]["title"], "Новая заявка")
+        self.assertEqual(result[0]["priority"]["code"], "high")
 
     def test_merged_redirect_payload_is_not_returned_as_new_issue(self) -> None:
         client = OkdeskClient("https://example.okdesk.ru", "u", "p", 30)
@@ -87,6 +112,15 @@ class ClientTests(unittest.TestCase):
         client = OkdeskClient("https://example.okdesk.ru", "u", "p", 30)
         client.api_token = "secret"
         client.session = FakeSession(FakeResponse(302, {}))  # type: ignore[assignment]
+
+        self.assertIsNone(client.get_issue(42))
+
+    def test_http_200_without_id_is_skipped_as_absent_issue(self) -> None:
+        client = OkdeskClient("https://example.okdesk.ru", "u", "p", 30)
+        client.api_token = "secret"
+        client.session = FakeSession(  # type: ignore[assignment]
+            FakeResponse(200, {"errors": {"issue": ["not found"]}})
+        )
 
         self.assertIsNone(client.get_issue(42))
 

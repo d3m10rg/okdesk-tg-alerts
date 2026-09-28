@@ -27,8 +27,11 @@ class FakeOkdesk:
     def authenticate(self) -> None:
         pass
 
-    def latest_issue_ids(self, limit: int = 10) -> list[int]:
-        return self.latest[:limit]
+    def latest_issues(self, limit: int = 10) -> list[dict[str, Any]]:
+        return [
+            dict(self.issues.get(issue_id) or {"id": issue_id})
+            for issue_id in self.latest[:limit]
+        ]
 
     def get_issue(self, issue_id: int) -> dict[str, Any] | None:
         self.lookups.append(issue_id)
@@ -90,7 +93,7 @@ class MonitorTests(unittest.TestCase):
         sent = IssueMonitor(okdesk, telegram, self.store).poll_once()
 
         self.assertEqual(sent, 2)
-        self.assertEqual(okdesk.lookups, [11, 12, 13])
+        self.assertEqual(okdesk.lookups, [11])
         self.assertIn("№ заявки: 12", telegram.messages[0])
         self.assertIn("Уровень: высокий", telegram.messages[0])
         self.assertIn("№ заявки: 13", telegram.messages[1])
@@ -100,6 +103,19 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn(11, stored.received_ids)
         self.assertEqual(stored.received_ids[:2], [13, 12])
         self.assertLessEqual(len(stored.received_ids), MAX_STORED_IDS)
+
+    def test_visible_list_item_does_not_depend_on_detail_endpoint(self) -> None:
+        state = MonitorState(initialized=True, cursor=10, cursor_received=True)
+        self.store.save(state)
+        okdesk = FakeOkdesk([11], {11: issue(11, "high")})
+        telegram = FakeTelegram()
+
+        sent = IssueMonitor(okdesk, telegram, self.store).poll_once()
+
+        self.assertEqual(sent, 1)
+        self.assertEqual(okdesk.lookups, [])
+        self.assertIn("№ заявки: 11", telegram.messages[0])
+        self.assertEqual(self.store.load().high_watermark, 11)
 
     def test_cycle_limit_resumes_without_losing_numbers(self) -> None:
         state = MonitorState(initialized=True, cursor=20, cursor_received=True)

@@ -13,7 +13,7 @@ LOGGER = logging.getLogger(__name__)
 class OkdeskApi(Protocol):
     def authenticate(self) -> None: ...
 
-    def latest_issue_ids(self, limit: int = 10) -> list[int]: ...
+    def latest_issues(self, limit: int = 10) -> list[dict[str, Any]]: ...
 
     def get_issue(self, issue_id: int) -> dict[str, Any] | None: ...
 
@@ -84,7 +84,9 @@ class IssueMonitor:
 
     def poll_once(self) -> int:
         state = self.state_store.load()
-        latest_ids = self._with_reauthentication("latest_issue_ids", 10)
+        latest_issues = self._with_reauthentication("latest_issues", 10)
+        latest_by_id = {int(issue["id"]): issue for issue in latest_issues}
+        latest_ids = list(latest_by_id)
 
         if not state.initialized:
             state.initialize(latest_ids)
@@ -113,7 +115,13 @@ class IssueMonitor:
         sent = 0
         dirty = False
         for issue_id in range(start, target + 1):
-            issue = self._with_reauthentication("get_issue", issue_id)
+            # The list response already contains the title and priority. Using it for
+            # visible new issues avoids losing an alert when the detail endpoint is
+            # briefly unavailable immediately after creation. Direct lookups are only
+            # needed for numbers between the stored cursor and the newest list item.
+            issue = latest_by_id.get(issue_id)
+            if issue is None:
+                issue = self._with_reauthentication("get_issue", issue_id)
             if issue is None:
                 LOGGER.debug("Issue %d is absent, merged, or not visible; skipping", issue_id)
                 state.advance(issue_id, received=False)
